@@ -1,0 +1,88 @@
+package gd.ipChanage;
+
+import java.io.IOException;
+
+import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.io.LongWritable;
+import org.apache.hadoop.io.Text;
+import org.apache.hadoop.mapreduce.Job;
+import org.apache.hadoop.mapreduce.Mapper;
+import org.apache.hadoop.mapreduce.Reducer;
+import org.apache.hadoop.mapreduce.lib.input.FileInputFormat;
+import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;
+
+/**
+ * 
+ * 这个类把"id"		"city_id"	"ip" 
+ * 		"17"		"1"		"1.45.68.0/24"	格式文件转为(注意:带引号——>不带引号)
+ * 
+ * 		"id"	"city_id"	"ip_start"	"ip_end"
+ * 		17		1			1.45.68.1	1.45.68.254		
+ *		提取每个IP段内的IP
+ */
+public class IpAreaChangeStartEnd {
+
+	public static void main(String[] args) throws Exception {
+		Configuration conf = new Configuration();
+		Job job = Job.getInstance(conf, "IpAreaChangeToIp");
+		job.setJarByClass(IpAreaChangeStartEnd.class);
+		job.setMapperClass(IpAreaChangeMap.class);
+		job.setReducerClass(Reducer.class);
+		job.setOutputKeyClass(Text.class);
+		job.setOutputValueClass(Text.class);
+
+		FileInputFormat.setInputPaths(job, new Path(args[0]));
+		FileOutputFormat.setOutputPath(job, new Path(args[1]));
+		if (!job.waitForCompletion(true))
+			return;
+	}
+	
+	public static class IpAreaChangeMap extends Mapper<LongWritable, Text, Text, Text> {
+		Text key = new Text();
+		Text val = new Text();
+		
+		public void map(LongWritable ikey, Text ivalue, Context context) throws IOException, InterruptedException {
+			String line = ivalue.toString().trim();
+			String[] strings=line.split("\t");
+				if (strings.length>2) {
+					String ip = strings[2].substring(1, strings[2].length() - 1);
+					String[] strs = ip.split("\\/");
+						if (strs.length>1) {
+							int ym = Integer.valueOf(strs[1]);
+							Long ip3long = ipToLong(strs[0]);
+							int mask = 0xFFFFFFFF << (32 - ym);
+							Long ipnet = ip3long & mask;
+							String theip = longToIp(ipnet);//这个是网络IPx.x.x.0，我们要算子网IP还的剔除x.x.x.255
+							key.set(strings[0].substring(1,strings[0].length()-1)+"\t"+strings[1].substring(1,strings[1].length()-1));
+							int loop = 2 << (32 - ym - 1);
+							String start_ip=longToIp(ipnet+1);
+							String end_ip=longToIp(ipnet+loop-2);
+							val.set(start_ip+"\t"+end_ip);
+							context.write(key, val);
+						} 
+				}
+		}
+	}
+	
+	 public static long ipToLong(String ipAddress) {
+			long result = 0;
+			String[] strsip = ipAddress.split("\\.");
+			Long ip1 = Long.valueOf(strsip[0]);
+			Long ip2 = Long.valueOf(strsip[1]);
+			Long ip3 = Long.valueOf(strsip[2]);
+			Long ip4 = Long.valueOf(strsip[3]);
+			result=(ip1<<24)+(ip2<<16)+(ip3<<8)+ip4; 
+//			Long ip2long=ip1*256*256*256+ip2*256*256+ip3*256+ip4; 
+//			Long ip3long=(ip1<<24)|(ip2<<16)|(ip3<<8)|ip4;
+			return result;
+		  }
+	  //ip = 3232235778
+	  public static String longToIp(long ip) {
+		return ((ip >> 24) & 0xFF) + "." 
+			+ ((ip >> 16) & 0xFF) + "." 
+			+ ((ip >> 8) & 0xFF) + "." 
+			+ (ip & 0xFF);
+	  }
+
+}
